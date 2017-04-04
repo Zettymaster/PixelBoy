@@ -41,15 +41,16 @@ Vector<byte> gameData;
 //types enums and the like
 enum Game : byte
 {
-	SNAKE = 1,
-	FLIP = 2,
+	FLIP = 1,
+	SNAKE = 2,
 };
 
 //prototypes
 void flushScreen();
-void checkBattery();
-void setGame();
+inline void checkBattery();
+inline void setGame();
 void tickGame();
+void onGameChange();
 
 //functions
 void setup()
@@ -72,6 +73,7 @@ void setup()
 	strip.show();
 
 	currentGame = EEPROM.read(EEPROM_LAST_GAME_ADDRESS);
+	onGameChange();
 	long seed;
 	EEPROM.get(EEPROM_RANDOM_ADDRESS, seed);
 	randomSeed(seed);
@@ -103,7 +105,7 @@ void flushScreen()
 	strip.show();
 }
 
-void checkBattery()
+inline void checkBattery()
 {
 	int monitor = analogRead(BATTERY_MONITOR);
 	
@@ -129,30 +131,64 @@ void checkBattery()
 
 }
 
-void setGame()
+inline void setGame()
 {
 	if (digitalRead(BUTTON_A_PIN) && digitalRead(BUTTON_B_PIN)) {
 
 		switch (currentGame) 
 		{
-			case Game::SNAKE:
-				currentGame = Game::FLIP;
-				break;
 			case Game::FLIP:
 				currentGame = Game::SNAKE;
+				onGameChange();
+				break;
+			case Game::SNAKE:
+				currentGame = Game::FLIP;
+				onGameChange();
 				break;
 			default:
-				currentGame = Game::SNAKE;
+				currentGame = Game::FLIP;
+				onGameChange();
 				break;
 		}
 		EEPROM.update(EEPROM_LAST_GAME_ADDRESS, currentGame);
 	}
 }
 
+void onGameChange() 
+{
+	delete &gameData;
+	gameData = Vector<byte>();
+
+	switch (currentGame)
+	{
+	case FLIP:
+		for (int i = 0; i < MATRIX_X; i++) {
+			for (int j = 0; j < MATRIX_Y; j++) {
+				screen[i][j] = random(2);
+			}
+		}
+		break;
+
+	}
+
+}
+
 void tickGame()
 {
 
+	switch (currentGame)
+	{
+	case Game::FLIP:
 
+
+
+
+
+		break;
+	case Game::SNAKE:
+
+		break;
+	}
 
 
 }
