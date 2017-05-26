@@ -7,47 +7,44 @@
 #define STRIP_PIXELS 40
 #define STRIP_PIN 6
 #define STRIP_MODE NEO_GRBW + NEO_KHZ800
+#define BRIGHTNESS 50
 
 #define UNUSED_ANALOG_PIN A0
-#define UNUSED_COLOR ((uint32_t)0xFFFFFFFF)
+#define UNUSED_COLOR	static_cast<uint32_t>(0xFFFFFFFF)
+#define BLACK			static_cast<uint32_t>(0x00000000)
 #define EEPROM_LAST_GAME_ADDRESS 0
+#define GAME_CHANGE_TIMEOUT 500
 
 #define MATRIX_X 8
 #define MATRIX_Y 5
-
-#define BATTERY_MONITOR		A0
-#define BATTERY_LED_PIN		13
-#define BATTERY_LOW			256
-#define BATTERY_VERY_LOW	128
-#define BATTERY_TIMEOUT		64
 
 #define BUTTON_MODE			INPUT_PULLUP
 #define BUTTON_PRESSED		LOW
 #define BUTTON_RELEASED		HIGH
 #define BUTTON_A_PIN		1
 #define BUTTON_B_PIN		0
-#define BUTTON_UP_PIN		4
-#define BUTTON_DOWN_PIN		2
+#define BUTTON_UP_PIN		3
+#define BUTTON_DOWN_PIN		4
 #define BUTTON_LEFT_PIN		5
-#define BUTTON_RIGHT_PIN	3
+#define BUTTON_RIGHT_PIN	2
 
 //color definitions in format: WWRRGGBB
-#define FLIP_DELAY_NORMAL 20
-#define FLIP_DELAY_WIN 5
-#define FLIP_COLOR_ON		((uint32_t)0x00FF0000)
-#define FLIP_COLOR_OFF		((uint32_t)0x0000FF00)
-#define FLIP_COLOR_WIN		((uint32_t)0x000F0F0F)
-#define FLIP_COLOR_SELECT	((uint32_t)0x000000FF)
+#define FLIP_DELAY_NORMAL	200
+#define FLIP_DELAY_WIN		50
+#define FLIP_COLOR_ON		static_cast<uint32_t>(0x00FF0000)
+#define FLIP_COLOR_OFF		static_cast<uint32_t>(0x0000FF00)
+#define FLIP_COLOR_WIN		static_cast<uint32_t>(0x000F0F0F)
+#define FLIP_COLOR_SELECT	static_cast<uint32_t>(0x000000FF)
 
-#define setColor(x, y, c) (screen[x][y] = color)
+#define SNAKE_DELAY_NORMAL			500
+#define SNAKE_DELAY_REDUCTION		10
+#define SNAKE_WIN_LENGTH			10
+#define SNAKE_START_LENGTH			3
+#define SNAKE_COLOR_CANDY_RANDOM
+#define SNAKE_COLOR_CANDY			static_cast<uint32_t>(0x000000FF)
+#define SNAKE_COLOR_WIN				static_cast<uint32_t>(0x0000FF00)
+
 #pragma endregion
-
-//vars
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(STRIP_PIXELS, STRIP_PIN, STRIP_MODE);
-uint32_t screen[MATRIX_X][MATRIX_Y];
-bool gameWon = false;
-byte currentGame;
-void* gameData;
 
 //types enums and the like
 enum Game : byte
@@ -56,46 +53,83 @@ enum Game : byte
 	SNAKE = 2,
 };
 
-//saves data for the flip game
-struct FlipData
+enum Orientation : byte
 {
-	byte m_x;
-	byte m_y;
-	bool m_active;
-	uint32_t m_underColor;
+	NORTH = 1,
+	EAST = 2,
+	SOUTH = 3,
+	WEST = 4
+};
 
-	FlipData(byte x, byte y, bool active, uint32_t underColor)
-		: m_x(x), m_y(y), m_active(active), m_underColor(underColor){}
+struct SnakePart
+{
+	int x;
+	int y;
 
-	~FlipData() {}
+	SnakePart(int x, int y) : x(x), y(y){}
 
+};
+
+//vars
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(STRIP_PIXELS, STRIP_PIN, STRIP_MODE);
+uint32_t screen[MATRIX_X][MATRIX_Y];
+bool gameWon = false;
+long lastGameChange;
+byte currentGame = SNAKE;
+
+int global_x;
+int global_y;
+bool global_active;
+uint32_t global_underColor;
+Orientation global_orientation;
+
+//uses constructor
+SnakePart snake_parts[] = {
+	{ -1, -1 },
+	{ -1, -1 },
+	{ -1, -1 },
+	{ -1, -1 },
+	{ -1, -1 },
+	{ -1, -1 },
+	{ -1, -1 },
+	{ -1, -1 },
+	{ -1, -1 },
+	{ -1, -1 },
 };
 
 //prototypes
 void flushScreen();
-//inline void checkBattery();
+void clearScreen();
 inline void setGame();
 void tickGame();
 void onGameChange();
+inline void incrementByOrientation(int &x, int &y, Orientation ori);
 
 //functions
 void setup()
 {
-	//pinMode(BATTERY_MONITOR, INPUT);
-	//pinMode(BATTERY_LED_PIN, OUTPUT);
 
-	pinMode(BUTTON_A_PIN,		INPUT_PULLUP);
-	pinMode(BUTTON_B_PIN,		INPUT_PULLUP);
-	pinMode(BUTTON_UP_PIN,		INPUT_PULLUP);
-	pinMode(BUTTON_DOWN_PIN,	INPUT_PULLUP);
-	pinMode(BUTTON_LEFT_PIN,	INPUT_PULLUP);
-	pinMode(BUTTON_RIGHT_PIN,	INPUT_PULLUP);
+	Serial.end();
+	noInterrupts();
+
+	//set pin modes for 
+	pinMode(BUTTON_A_PIN,		BUTTON_MODE);
+	pinMode(BUTTON_B_PIN,		BUTTON_MODE);
+	pinMode(BUTTON_UP_PIN,		BUTTON_MODE);
+	pinMode(BUTTON_DOWN_PIN,	BUTTON_MODE);
+	pinMode(BUTTON_RIGHT_PIN,	BUTTON_MODE);
+	pinMode(BUTTON_LEFT_PIN,	BUTTON_MODE);
 
 	strip.begin();
-	strip.setBrightness(255);
+	strip.setBrightness(BRIGHTNESS);
 	strip.show();
 	
 	randomSeed(analogRead(UNUSED_ANALOG_PIN));
+
+	//currentGame = EEPROM.read(EEPROM_LAST_GAME_ADDRESS);
+	//if not set already, default it to Flip
+	if (currentGame == 0 || currentGame > static_cast<byte>(Game::SNAKE))currentGame = Game::FLIP;
+
 	onGameChange();
 	
 
@@ -104,7 +138,6 @@ void setup()
 void loop()
 {
 
-	//checkBattery();
 	setGame();
 
 	tickGame();
@@ -115,67 +148,58 @@ void loop()
 
 void flushScreen() 
 {
+	int pixel = 0;
 
 	for (int i = 0; i < MATRIX_X; i++)
 	{
 		for (int j = 0; j < MATRIX_Y; j++)
 		{
-			strip.setPixelColor(i + (j * MATRIX_X), screen[i][j]);
+			strip.setPixelColor(pixel, screen[i][j]);
+			pixel++;
 		}
 	}
 	strip.show();
 }
 
-//power shield malfunctioned
-/*
-inline void checkBattery()
-{
-	int monitor = analogRead(BATTERY_MONITOR);
-	
-	if (monitor < BATTERY_VERY_LOW) 
-	{
-		if ((millis() / BATTERY_TIMEOUT) < 5) 
-		{
-			digitalWrite(BATTERY_LED_PIN, HIGH);
-		}
-		else
-		{
-			digitalWrite(BATTERY_LED_PIN, LOW);
+void clearScreen() {
+	for (int x = 0; x < MATRIX_X; x++) {
+		for (int y = 0; y = MATRIX_Y; y++) {
+			screen[x][y] = BLACK;
 		}
 	}
-	if (monitor < BATTERY_LOW) 
-	{
-		digitalWrite(BATTERY_LED_PIN, HIGH);
-	}
-	else 
-	{
-		digitalWrite(BATTERY_LED_PIN, LOW);
-	}
+}
 
-}*/
-
-inline void setGame()
+void setGame()
 {
-	
-	if (digitalRead(BUTTON_A_PIN) == BUTTON_PRESSED && 
-		digitalRead(BUTTON_B_PIN) == BUTTON_PRESSED) 
+
+	if (lastGameChange + GAME_CHANGE_TIMEOUT > millis())return;
+
+	if (digitalRead(BUTTON_B_PIN) == BUTTON_PRESSED) 
 	{	
+
+		clearScreen();
+		delay(300);
+
 		switch (currentGame) 
 		{
+			//Flip to Snake
 			case Game::FLIP:
 				currentGame = Game::SNAKE;
 				onGameChange();
 				break;
+			//Snake to Flip
 			case Game::SNAKE:
 				currentGame = Game::FLIP;
 				onGameChange();
-				break;
+			//for wired errors
 			default:
 				currentGame = Game::FLIP;
 				onGameChange();
 				break;
 		}
+		//update to avoid unneccecary write cycles on EEPROM
 		EEPROM.update(EEPROM_LAST_GAME_ADDRESS, currentGame);
+		lastGameChange = millis();
 	}
 }
 
@@ -185,25 +209,64 @@ void onGameChange()
 
 	switch (currentGame)
 	{
+	//change TO flip
+#pragma region toFLIP
 	case FLIP:
-		
-		
 
+		//generate "map"
 		for (int i = 0; i < MATRIX_X; i++) {
 			for (int j = 0; j < MATRIX_Y; j++) {
 				screen[i][j] = random(2) ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
 			}
 		}
-
-		byte x = random(MATRIX_X);
-		byte y = random(MATRIX_Y);
-		gameData = new FlipData(x, y, true, screen[x][y]);
+		
+		global_x = random(MATRIX_X);
+		global_y = random(MATRIX_Y);
+		global_active = true;
+		global_underColor = screen[global_x][global_y];
 
 		flushScreen();
-		delay(FLIP_DELAY_NORMAL);
 
 		break;
+#pragma endregion
 
+#pragma region toSNAKE
+	case SNAKE:
+
+		global_x = random(MATRIX_X);
+		global_y = random(MATRIX_Y);
+
+		global_orientation = NORTH;
+
+		//init x coord
+		for (int i = 0; i > SNAKE_WIN_LENGTH; i++) {
+			snake_parts[i].x = i < SNAKE_START_LENGTH ? i : (-1);
+
+		}
+		//init y coord
+		for (int i = 0; i > SNAKE_WIN_LENGTH; i++) {
+			snake_parts[i].x = i < SNAKE_START_LENGTH ? 2 : (-1);
+		}
+
+		for (int i = 0; i < SNAKE_START_LENGTH; i++)
+		{
+
+			int x = snake_parts[i].x;
+			int y = snake_parts[i].y;
+
+#ifdef SNAKE_COLOR_CANDY_RANDOM
+			screen[x][y] = Adafruit_NeoPixel::Color(random(255), random(255), random(255));
+#else
+			screen[x][y] = SNAKE_COLOR_CANDY;
+#endif
+
+		}
+
+		flushScreen();
+		delay(SNAKE_DELAY_NORMAL - (SNAKE_DELAY_REDUCTION * SNAKE_START_LENGTH));
+
+		break;
+#pragma endregion
 	}
 
 }
@@ -213,169 +276,303 @@ void tickGame()
 
 	switch (currentGame)
 	{
-	case Game::FLIP:
+#pragma region tickFLIP
+		case Game::FLIP:
+	
+			if (!gameWon) {
 
-		
+				//check if won
+				bool win = true;
+				for (int x = 0; x < MATRIX_X; x++) {
+					for (int y = 0; y < MATRIX_Y; y++) {
+						if (screen[x][y] != FLIP_COLOR_ON)win = false;
+					}
+				}
+				gameWon = win;
+
+				//if won, prepare for animation
+				if (win) {
+					global_x = 0;
+					break;
+				}
+				//change coursor position
+
+				//up -> x+1
+				if (digitalRead(BUTTON_UP_PIN) == BUTTON_PRESSED) {
+
+					if (global_active) {
+						screen[global_x][global_y] = global_underColor;
+					}
+					global_x++;
+
+					if (global_x >= MATRIX_X)global_x = 0;
+
+					global_underColor = screen[global_x][global_y];
+
+				}
+				//down -> x-1
+				if (digitalRead(BUTTON_DOWN_PIN) == BUTTON_PRESSED) {
+
+					if (global_active) {
+						screen[global_x][global_y] = global_underColor;
+					}
+
+
+					if ((int)global_x - 1 < 0) {
+						global_x = MATRIX_Y;
+					}
+					else {
+						global_x--;
+					}
+
+					global_underColor = screen[global_x][global_y];
+
+				}
+				//left -> y-1
+				if (digitalRead(BUTTON_LEFT_PIN) == BUTTON_PRESSED) {
+					if (global_active) {
+						screen[global_x][global_y] = global_underColor;
+					}
+					global_y++;
+
+					if (global_y >= MATRIX_Y)global_y = 0;
+
+					global_underColor = screen[global_x][global_y];
+
+				}
+				//right -> y+1
+				if (digitalRead(BUTTON_RIGHT_PIN) == BUTTON_PRESSED) {
+
+					if (global_active) {
+						screen[global_x][global_y] = global_underColor;
+					}
+
+					if ((int)global_y - 1 < 0) {
+						global_y = MATRIX_X;
+					}
+					else {
+						global_y--;
+					}
+
+					global_underColor = screen[global_x][global_y];
+
+				}
+
+				//cycle coursor color
+				if (global_active) {
+					screen[global_x][global_y] = FLIP_COLOR_SELECT;
+					global_active = false;
+				}
+				else {
+					screen[global_x][global_y] = global_underColor;
+					global_active = true;
+				}
+
+				//process button press
+				if (digitalRead(BUTTON_A_PIN) == BUTTON_PRESSED) {
+
+					int x = global_x;
+					int y = global_y;
+
+					global_underColor = global_underColor == FLIP_COLOR_ON ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
+					global_active = false;
+
+					if (x - 1 >= 0) {
+						screen[x - 1][y] = screen[x - 1][y] == FLIP_COLOR_ON ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
+					}
+
+					if (x + 1 < MATRIX_X) {
+						screen[x + 1][y] = screen[x + 1][y] == FLIP_COLOR_ON ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
+					}
+
+					if (y - 1 >= 0) {
+						screen[x][y - 1] = screen[x][y - 1] == FLIP_COLOR_ON ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
+					}
+
+					if (y + 1 < MATRIX_Y) {
+						screen[x][y + 1] = screen[x][y + 1] == FLIP_COLOR_ON ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
+					}
+
+				}
+
+				delay(FLIP_DELAY_NORMAL);
+
+			}
+			//won
+			else {
+
+				if (global_active) {
+					
+					for (int x = 0; x < MATRIX_X; x++) {
+						for (int y = 0; y < MATRIX_Y; y++) {
+							screen[x][y] = FLIP_COLOR_WIN;
+						}
+					}
+					global_active = false;
+				}
+				else {
+					for (int x = 0; x < MATRIX_X; x++) {
+						for (int y = 0; y < MATRIX_Y; y++) {
+							screen[x][y] = FLIP_COLOR_WIN;
+						}
+					}
+					global_active = false;
+				}
+				global_x++;
+
+				if (global_x == 10) {
+					onGameChange();
+				}
+
+				delay(FLIP_DELAY_WIN);
+
+			}
+
+			break;
+#pragma endregion
+#pragma region tickSNAKE
+	case SNAKE:
+
+
 		if (!gameWon) {
+			
+			int cX = global_x;
+			int cY = global_y;
 
-			uint32_t color = UNUSED_COLOR;
-			bool win = true;
-			for (int x = 0; x < MATRIX_X; x++) {
-				for (int y = 0; y < MATRIX_Y; y++) {
-					if (color != UNUSED_COLOR && screen[x][y] != color)win = false;
-				}
-			}
-			gameWon = win;
+			int x = snake_parts[0].x;
+			int y = snake_parts[0].y;
+			bool candyAssimilated = false;
 
-			if (win) {
-				((FlipData*)gameData)->m_x = 0;
-				break;
-			}
+			//warnig, x and y get modified!
+			incrementByOrientation(x, y, global_orientation);
 
-			FlipData* data = (FlipData*)gameData;
+			//generate new candy
+			if (cX == x && cY == y) {
 
-			//change coursor position
-			if (digitalRead(BUTTON_UP_PIN) == BUTTON_PRESSED) {
+				candyAssimilated = true;
+				bool posValid = false;
 
-				if (data->m_active) {
-					screen[data->m_x][data->m_y] = data->m_underColor;
-				}
-				data->m_x++;
+				pos: while (!posValid) {
 
-				if (data->m_x >= MATRIX_X)data->m_x = 0;
+					cX = random(MATRIX_X);
+					cY = random(MATRIX_Y);
 
-				data->m_underColor = screen[data->m_x][data->m_y];
-
-			}
-			else if (digitalRead(BUTTON_DOWN_PIN) == BUTTON_PRESSED) {
-
-				if (data->m_active) {
-					screen[data->m_x][data->m_y] = data->m_underColor;
+					for (int i = 0; i < SNAKE_WIN_LENGTH; i++) {
+						if (cX == snake_parts[i].x && cY == snake_parts[i].y) {
+							//no java labels :(
+							goto pos;
+						}
+					}
+					posValid = true;
 				}
 
-
-				if ((int)data->m_x - 1 < 0) {
-					data->m_x = MATRIX_Y;
-				}
-				else {
-					data->m_x--;
-				}
-
-				data->m_underColor = screen[data->m_x][data->m_y];
-
-
-			}
-			else if (digitalRead(BUTTON_LEFT_PIN) == BUTTON_PRESSED) {
-				if (data->m_active) {
-					screen[data->m_x][data->m_y] = data->m_underColor;
-				}
-				data->m_y++;
-
-				if (data->m_y >= MATRIX_Y)data->m_y = 0;
-
-				data->m_underColor = screen[data->m_x][data->m_y];
-
-			}
-			else if (digitalRead(BUTTON_RIGHT_PIN) == BUTTON_PRESSED) {
-
-				if (data->m_active) {
-					screen[data->m_x][data->m_y] = data->m_underColor;
-				}
-
-				if ((int)data->m_y - 1 < 0) {
-					data->m_y = MATRIX_X;
-				}
-				else {
-					data->m_y--;
-				}
-
-				data->m_underColor = screen[data->m_x][data->m_y];
-
+#ifdef SNAKE_COLOR_CANDY_RANDOM
+				screen[cX][cY] = Adafruit_NeoPixel::Color(random(255), random(255), random(255));
+#else
+				screen[cX][cY] = SNAKE_COLOR_CANDY;
+#endif
 			}
 
-			//cycle coursor color
-			if (data->m_active) {
+			if (candyAssimilated) {
+				for (int i = 0; i < SNAKE_WIN_LENGTH; i++) {
 
-				screen[data->m_x][data->m_y] = FLIP_COLOR_SELECT;
-				data->m_active = false;
+					if (snake_parts[i - 1].x == -1)break;
+					
+					cX = snake_parts[i].x;
+					cY = snake_parts[i].y;
+					
+					snake_parts[i].x = x;
+					snake_parts[i].y = y;
 
+					x = cX;
+					y = cY;
+
+				}
 			}
 			else {
 
-				screen[data->m_x][data->m_y] = data->m_underColor;
-				data->m_active = true;
+				for (int i = 0; i < SNAKE_WIN_LENGTH; i++) {
 
-			}
+					screen[x][y] = screen[snake_parts[i].x][snake_parts[i].y];
 
-			//process button press
-			if (digitalRead(BUTTON_A_PIN) == BUTTON_PRESSED) {
+					if (snake_parts[i].x == -1)break;
 
-				int x = data->m_x;
-				int y = data->m_y;
+					if (i != 0) {
+						cX = snake_parts[i].x;
+						cY = snake_parts[i].y;
+					}
 
-				data->m_underColor = data->m_underColor == FLIP_COLOR_ON ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
-				data->m_active = true;
+					snake_parts[i].x = x;
+					snake_parts[i].y = y;
 
-				if (x - 1 >= 0) {
-					screen[x - 1][y] = screen[x - 1][y] == FLIP_COLOR_ON ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
-				}
+					x = cX;
+					y = cY;
 
-				if (x + 1 < MATRIX_X) {
-					screen[x + 1][y] = screen[x + 1][y] == FLIP_COLOR_ON ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
-				}
-
-				if (y - 1 >= 0) {
-					screen[x][y - 1] = screen[x][y - 1] == FLIP_COLOR_ON ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
-				}
-
-				if (y + 1 < MATRIX_Y) {
-					screen[x][y + 1] = screen[x][y + 1] == FLIP_COLOR_ON ? FLIP_COLOR_ON : FLIP_COLOR_OFF;
 				}
 
 			}
+			flushScreen();
 
+			int cntParts = 0;
+			for (int i = 0; i < SNAKE_WIN_LENGTH; i++) {
+				if (snake_parts[i].x == -1) {
+					cntParts = i;
+					break;
+				}
+			}
 
-			delay(FLIP_DELAY_NORMAL);
+			if (cntParts >= SNAKE_WIN_LENGTH) {
+				gameWon = true;
+			}
+
+			delay(SNAKE_DELAY_NORMAL - (cntParts * SNAKE_DELAY_REDUCTION));
 
 		}
 		else {
 
-			FlipData* data = (FlipData*)gameData;
-
-			if (data->m_active) {
-				
+			if (global_y) {
 				for (int x = 0; x < MATRIX_X; x++) {
 					for (int y = 0; y < MATRIX_Y; y++) {
-						screen[x][y] = FLIP_COLOR_WIN;
+						screen[x][y] = SNAKE_COLOR_WIN;
 					}
 				}
-				data->m_active = false;
 			}
 			else {
 				for (int x = 0; x < MATRIX_X; x++) {
 					for (int y = 0; y < MATRIX_Y; y++) {
-						screen[x][y] = FLIP_COLOR_WIN;
+						screen[x][y] = SNAKE_COLOR_CANDY;
 					}
 				}
-				data->m_active = false;
 			}
-			data->m_x++;
 
-			if (data->m_x == 255) {
-				gameWon = false;
-				delete gameData;
+
+			if (global_x >= 10) {
 				onGameChange();
 			}
-
-			delay(FLIP_DELAY_WIN);
 
 		}
 
 		break;
-	case Game::SNAKE:
-
-		break;
+#pragma endregion
 	}
 
+}
+
+inline void incrementByOrientation(int &x, int &y, Orientation ori) {
+
+	switch (ori) {
+	case NORTH:
+		x++;
+		return;
+	case SOUTH:
+		x--;
+		return;
+	case WEST:
+		y++;
+		return;
+	case EAST:
+		y--;
+		return;
+	}
 
 }
