@@ -126,7 +126,7 @@ void setup()
 	
 	randomSeed(analogRead(UNUSED_ANALOG_PIN));
 
-	//currentGame = EEPROM.read(EEPROM_LAST_GAME_ADDRESS);
+	currentGame = EEPROM.read(EEPROM_LAST_GAME_ADDRESS);
 	//if not set already, default it to Flip
 	if (currentGame == 0 || currentGame > static_cast<byte>(Game::SNAKE))currentGame = Game::FLIP;
 
@@ -178,7 +178,6 @@ void setGame()
 	{	
 
 		clearScreen();
-		delay(300);
 
 		switch (currentGame) 
 		{
